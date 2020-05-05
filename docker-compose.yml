@@ -1,0 +1,234 @@
+---
+version: '3'
+services:
+
+  es01:
+    image: docker.elastic.co/elasticsearch/elasticsearch:$ELASTIC_VERSION
+    container_name: es01
+    environment:
+      - node.name=es01
+      - cluster.name=microservice-monitoring
+      - discovery.seed_hosts=es02
+      - cluster.initial_master_nodes=es01,es02
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - ELASTIC_PASSWORD=$ELASTIC_PASSWORD
+      - xpack.security.enabled=$ELASTIC_SECURITY
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.keystore.type=PKCS12
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - xpack.security.transport.ssl.keystore.path=elastic-stack-ca.p12
+      - xpack.security.transport.ssl.truststore.path=elastic-stack-ca.p12
+      - xpack.security.transport.ssl.truststore.type=PKCS12
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - ./elastic-stack-ca.p12:/usr/share/elasticsearch/config/elastic-stack-ca.p12
+      - esdata1:/usr/share/elasticsearch/data
+    ports:
+      - 9200:9200
+    healthcheck:
+      test: ["CMD", "curl","-s" ,"-f", "http://elastic:$ELASTIC_PASSWORD@localhost:9200/_cat/health"]
+    networks: ['stack']
+
+  es02:
+    image: docker.elastic.co/elasticsearch/elasticsearch:$ELASTIC_VERSION
+    container_name: es02
+    environment:
+      - node.name=es02
+      - cluster.name=microservice-monitoring
+      - discovery.seed_hosts=es01
+      - cluster.initial_master_nodes=es01,es02
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - ELASTIC_PASSWORD=$ELASTIC_PASSWORD
+      - xpack.security.enabled=$ELASTIC_SECURITY
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.keystore.type=PKCS12
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - xpack.security.transport.ssl.keystore.path=elastic-stack-ca.p12
+      - xpack.security.transport.ssl.truststore.path=elastic-stack-ca.p12
+      - xpack.security.transport.ssl.truststore.type=PKCS12
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - ./elastic-stack-ca.p12:/usr/share/elasticsearch/config/elastic-stack-ca.p12
+      - esdata2:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD", "curl","-s" ,"-f", "http://elastic:$ELASTIC_PASSWORD@localhost:9200/_cat/health"]
+    networks: ['stack']
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:$ELASTIC_VERSION
+    environment:
+      - ELASTICSEARCH_HOSTS=["http://es01:9200","http://es02:9200"]
+      - ELASTICSEARCH_USERNAME=kibana
+      - ELASTICSEARCH_PASSWORD=$KIBANA_PASSWORD
+    container_name: kibana
+    volumes:
+      - ./scripts:/mnt/scripts:ro
+    command: sh -c '/mnt/scripts/wait-for $DEBUG_WAIT_FOR http://elastic:$ELASTIC_PASSWORD@es01:9200 && /mnt/scripts/kibana.sh'
+    ports: 
+      - 5601:5601
+    healthcheck:
+      test: ["CMD", "curl", "-s", "-f", "http://kibana:$KIBANA_PASSWORD@localhost:5601/api/status"]
+      retries: 6
+    restart: on-failure
+    networks: ['stack']
+    depends_on: ['es01','es02']
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:$ELASTIC_VERSION
+    user: root
+    environment:
+      - ELASTICSEARCH_HOSTS=["http://es01:9200","http://es02:9200"]
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=$ELASTIC_PASSWORD
+    container_name: filebeat
+    # If the host system has logs at "/var/log", mount them at "/mnt/log"
+    # inside the container, where Filebeat can find them.
+    volumes:
+      - ./scripts:/mnt/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/log:/mnt/log:ro
+    # Provide a custom Filebeat configuration
+      - ./config/filebeat.yml:/usr/share/filebeat/filebeat.yml
+    command: sh -c 'chown root /usr/share/filebeat/filebeat.yml && chmod go-w /usr/share/filebeat/filebeat.yml && /mnt/scripts/wait-for $DEBUG_WAIT_FOR http://elastic:$ELASTIC_PASSWORD@kibana:5601/api/status && filebeat -e'
+    networks: ['stack']
+    depends_on: ['es01','es02']
+    restart: on-failure
+    healthcheck:
+      test: filebeat test config
+      interval: 30s
+      timeout: 15s
+      retries: 5
+
+  heartbeat:
+    image: docker.elastic.co/beats/heartbeat:$ELASTIC_VERSION
+    user: root
+    environment:
+      - ELASTICSEARCH_HOSTS=["http://es01:9200","http://es02:9200"]
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=$ELASTIC_PASSWORD
+      - KIBANA_HOSTS=http://kibana:5601
+    container_name: heartbeat
+    volumes:
+      - ./scripts:/mnt/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Provide a custom Heartbeat configuration
+      - ./config/heartbeat.yml:/usr/share/heartbeat/heartbeat.yml
+    command: sh -c 'chown root /usr/share/heartbeat/heartbeat.yml && chmod go-w /usr/share/heartbeat/heartbeat.yml && /mnt/scripts/wait-for $DEBUG_WAIT_FOR http://elastic:$ELASTIC_PASSWORD@kibana:5601/api/status && heartbeat -e'
+    networks: ['stack']
+    depends_on: ['es01','es02']
+    restart: on-failure
+    healthcheck:
+      test: heartbeat test config
+      interval: 30s
+      timeout: 15s
+      retries: 5
+
+  metricbeat:
+    image: docker.elastic.co/beats/metricbeat:$ELASTIC_VERSION
+    user: root
+    environment:
+      - ELASTICSEARCH_HOSTS=["http://es01:9200","http://es02:9200"]
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=$ELASTIC_PASSWORD
+    container_name: metricbeat
+    networks: ['stack']
+    # The commented sections below enable Metricbeat to monitor the Docker host,
+    # rather than the Metricbeat container. It's problematic with Docker for
+    # Windows, however, since "/proc", "/sys", etc. don't exist on Windows.
+    volumes:
+      - ./scripts:/mnt/scripts:ro
+      #Allows us to report on docker from the hosts information.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/hostfs/proc:ro
+      - /sys/fs/cgroup:/hostfs/sys/fs/cgroup:ro
+      #We mount the host filesystem so we can report on disk usage with the system module.
+      - /:/hostfs:ro
+      # Provide a custom Metricbeat configuration
+      - ./config/metricbeat.yml:/usr/share/metricbeat/metricbeat.yml
+    command: sh -c 'chown root /usr/share/metricbeat/metricbeat.yml && chmod go-w /usr/share/metricbeat/metricbeat.yml && /mnt/scripts/wait-for $DEBUG_WAIT_FOR http://elastic:$ELASTIC_PASSWORD@kibana:5601/api/status && metricbeat -e'
+    networks: ['stack']
+    depends_on: ['es01','es02']
+    restart: on-failure
+    healthcheck:
+      test: metricbeat test config
+      interval: 30s
+      timeout: 15s
+      retries: 5
+
+  packetbeat:
+    image: docker.elastic.co/beats/packetbeat:$ELASTIC_VERSION
+    user: root
+    environment:
+      # Since we did that, Packetbeat is not part of the "stack" Docker network
+      # that the other containers are connected to, and thus can't resolve the
+      # hostname "elasticsearch". Instead, we'll tell it to find Elasticsearch
+      # on "localhost", which is the Docker host machine in this context.
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=$ELASTIC_PASSWORD
+      - KIBANA_HOSTS=localhost:5601
+    container_name: packetbeat
+    volumes:
+      - ./scripts:/mnt/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Provide a custom Packetbeat configuration
+      - ./config/packetbeat.yml:/usr/share/packetbeat/packetbeat.yml
+    # Packetbeat needs some elevated privileges capture network traffic.
+    # We'll grant them with POSIX capabilities.
+    cap_add: ['NET_RAW', 'NET_ADMIN']
+    # Use "host mode" networking to allow Packetbeat to capture traffic from
+    # real network interface on the host, rather than being isolated to the
+    # container's virtual interface.
+    command: sh -c 'chown root /usr/share/packetbeat/packetbeat.yml && chmod go-w /usr/share/packetbeat/packetbeat.yml && /mnt/scripts/wait-for $DEBUG_WAIT_FOR http://elastic:$ELASTIC_PASSWORD@localhost:5601/api/status && packetbeat -e'
+    network_mode: host
+    depends_on: ['es01','es02']
+    restart: on-failure
+    healthcheck:
+      test: packetbeat test config
+      interval: 30s
+      timeout: 15s
+      retries: 5
+
+  apm-server:
+    image: docker.elastic.co/apm/apm-server:$ELASTIC_VERSION
+    environment:
+      - ELASTICSEARCH_HOSTS=["http://es01:9200","http://es02:9200"]
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=$ELASTIC_PASSWORD
+    container_name: apm-server
+    volumes:
+      - ./scripts:/mnt/scripts:ro
+      - ./config/apm-server.yml:/usr/share/apm-server/apm-server.yml
+    command: sh -c 'chmod go-w /usr/share/apm-server/apm-server.yml && /mnt/scripts/wait-for $DEBUG_WAIT_FOR http://elastic:$ELASTIC_PASSWORD@es01:9200 && /mnt/scripts/apm.sh'
+    ports: 
+      - 8200:8200
+    networks: ['stack']
+    depends_on: ['es01','es02']
+    restart: on-failure
+
+  apm-agent-download:
+    image: alpine:latest
+    container_name: apm-agent-download
+    command: sh -c 'cd /root/apm-agent ; wget https://repo1.maven.org/maven2/co/elastic/apm/elastic-apm-agent/$ELASTIC_APM_AGENT_VERSION/elastic-apm-agent-$ELASTIC_APM_AGENT_VERSION.jar; wget https://search.maven.org/remotecontent?filepath=org/jolokia/jolokia-jvm/$JOLOKIA_VERSION/jolokia-jvm-$JOLOKIA_VERSION-agent.jar'
+    volumes:
+      - apm-agent:/root/apm-agent
+
+networks:
+  stack: {}
+
+volumes:
+  esdata1:
+    driver: local
+  esdata2:
+    driver: local
+  apm-server: 
+    driver: local
+  apm-agent: 
+    driver: local

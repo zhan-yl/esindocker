@@ -1,0 +1,84 @@
+metricbeat.modules:
+
+- module: system
+  metricsets:
+    - cpu
+    - load
+    - core
+    - diskio
+    - filesystem
+    - fsstat
+    - memory
+    - network
+    - process
+    - socket
+  enabled: true
+  period: 10s
+  processes: ['.*']
+  cgroups: true
+
+- module: jolokia
+  metricsets: ["jmx"]
+  hosts: ["localhost:8080", "localhost:8081"]
+  username: admin
+  password: secret
+  namespace: "metrics"
+  jmx.mappings:
+    - mbean: "java.lang:type=Runtime"
+      attributes:
+        - attr: Uptime
+          field: uptime
+    - mbean: "java.lang:type=GarbageCollector,name=ConcurrentMarkSweep"
+      attributes:
+        - attr: CollectionTime
+          field: gc.cms_collection_time
+        - attr: CollectionCount
+          field: gc.cms_collection_count
+    - mbean: "java.lang:type=Memory"
+      attributes:
+        - attr: HeapMemoryUsage
+          field: memory.heap_usage
+        - attr: NonHeapMemoryUsage
+          field: memory.non_heap_usage
+  jmx.instance: "{{ inventory_hostname }}"
+
+- module: docker
+  metricsets: ["cpu", "info", "memory", "network", "diskio", "container"]
+  hosts: ["unix:///var/run/docker.sock"]
+  enabled: true
+  period: 10s
+
+- module: beat
+  metricsets:
+    - stats
+    - state
+  period: 10s
+  hosts: ["http://filebeat:5066", "http://metricbeat:5066", "http://heartbeat:5066"]
+  #username: "user"
+  #password: "secret"
+  xpack.enabled: true
+
+processors:
+- add_host_metadata: ~
+- add_cloud_metadata: ~
+- add_docker_metadata: ~
+- add_kubernetes_metadata: ~
+
+output.elasticsearch:
+  hosts: '${ELASTICSEARCH_HOSTS}'
+  username: '${ELASTICSEARCH_USERNAME:}'
+  password: '${ELASTICSEARCH_PASSWORD:}'
+
+xpack.monitoring.enabled: true
+
+setup.kibana:
+  host: "${KIBANA_HOSTS:kibana:5601}"
+  username: '${ELASTICSEARCH_USERNAME:}'
+  password: '${ELASTICSEARCH_PASSWORD:}'
+setup.dashboards.enabled: true
+setup.dashboards.retry.enabled: true
+setup.dashboards.retry.interval: 5s
+
+http.enabled: true
+http.host: metricbeat
+http.port: 5066
