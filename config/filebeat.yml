@@ -4,37 +4,17 @@ filebeat.config:
     reload.enabled: false
 
 filebeat.inputs:
-- type: log
-  paths:
-    - /mnt/backend-log/backend.json
-  fields_under_root: true
-  fields:
-    application: java
-    layer: backend
-  json.keys_under_root: true
-  json.add_error_key: true
-- type: log
-  paths:
-    - /mnt/frontend-log/frontend.json
-  fields_under_root: true
-  fields:
-    application: java
-    layer: frontend
-  json.keys_under_root: true
-  json.add_error_key: true
-
-# Module: mysql
-# Docs: https://www.elastic.co/guide/en/beats/filebeat/7.1/filebeat-module-mysql.html
 
 filebeat.modules:
 - module: system
-- module: mysql
-  error:
+  syslog:
     enabled: true
-    var.paths: ["/mnt/mysql-log/error.log*"]
-  slowlog:
+    var.paths: 
+      - /mnt/log/syslog*
+  auth:
     enabled: true
-    var.paths: ["/mnt/mysql-log/mysql-slow.log*"]
+    var.paths: 
+      - /mnt/log/auth.log*
 
 processors:
 - add_cloud_metadata: ~

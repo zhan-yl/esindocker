@@ -14,16 +14,6 @@ heartbeat.monitors:
   name: kibana
   hosts:
     - kibana
-- type: icmp
-  schedule: '@every 5s'
-  name: mysql
-  hosts:
-    - mysql
-- type: icmp
-  schedule: '@every 5s'
-  name: java-backend
-  hosts:
-    - java-backend
 
 - type: http
   schedule: '@every 5s'
@@ -40,40 +30,6 @@ heartbeat.monitors:
   name: kibana
   urls:
     - 'http://kibana:5601'
-- type: http
-  schedule: '@every 10s'
-  name: java-backend-jolokia
-  urls:
-    - 'http://java-backend:8778/jolokia/'
-- type: http
-  schedule: '@every 10s'
-  name: java-backend-add-user
-  urls:
-    - 'http://java-backend:8080/demo/add?name=zyl&email=zyl@zyl.com'
-  check.request:
-    method: "GET"
-  check.response:
-    status: 200
-    body:
-      - Saved
-      - saved
-- type: http
-  schedule: '@every 10s'
-  name: java-backend-get-weather
-  urls:
-    - 'http://java-backend:8080/demo/weather?rflag=0'
-  check.request:
-    method: "GET"
-  check.response:
-    status: 200
-    body:
-      - currentCity
-
-- type: tcp
-  enabled: true
-  schedule: '@every 5s'
-  name: mysql
-  hosts: ["tcp://mysql:3306"]
 
 processors:
 - add_cloud_metadata: ~
